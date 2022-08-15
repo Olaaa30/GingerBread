@@ -120,20 +120,25 @@ class GingerBread extends EventEmitter {
         if (tokenToBorrow === this.token0 && traderjoePrice > 0) {
           // the bug is in this if clause
           volumeToBorrow = this.TOKEN0_TRADE;
-          totalRepaymentInReturnToken = pangolinPrice * volumeToBorrow * (1 + (this.pangolinSwapRate / 100));
-          totalReceivedTokensFromSwap = traderjoePrice * volumeToBorrow * (1 - (this.traderjoeSwapRate / 100));
+          totalRepaymentInReturnToken = (pangolinPrice * volumeToBorrow) *  this.pangolinSwapRate ;
+          totalReceivedTokensFromSwap = traderjoePrice * volumeToBorrow * this.traderjoeSwapRate;
         } else if (tokenToBorrow === this.token0 && traderjoePrice < 0) {
           // handle second case here.
           // hold on for now
-          volumeToBorrow = this.TOKEN1_TRADE;
-          totalRepaymentInReturnToken  = pangolinPrice * volumeToBorrow
+          volumeToBorrow = this.TOKEN0_TRADE;
+
+          totalRepaymentInReturnToken = pangolinPrice * volumeToBorrow * (1 - (this.pangolinSwapRate / 100) );
+          totalReceivedTokensFromSwap  = traderjoePrice * volumeToBorrow * (1 + (this.traderjoeSwapRate / 100));
         } else if (tokenToBorrow === this.token1 && traderjoePrice > 0) {
           volumeToBorrow = this.TOKEN1_TRADE;
-          totalRepaymentInReturnToken = (volumeToBorrow / pangolinPrice) * (1 + (this.pangolinSwapRate / 100));
-          totalReceivedTokensFromSwap = (volumeToBorrow / traderjoePrice) * (1 - (this.traderjoeSwapRate / 100));
+          totalRepaymentInReturnToken = (volumeToBorrow * pangolinPrice) + this.pangolinSwapRate;
+          totalReceivedTokensFromSwap = (volumeToBorrow * traderjoePrice) + this.traderjoeSwapRate;
         } else if (tokenToBorrow === this.token1 && traderjoePrice < 0) {
           // handle fourth case here.
           // hold on for now
+          volumeToBorrow = this.TOKEN1_TRADE;
+          totalRepaymentInReturnToken = (volumeToBorrow / pangolinPrice) * (1 - (this.pangolinSwapRate / 100) );
+          totalReceivedTokensFromSwap  = (volumeToBorrow / traderjoePrice) * (1 + (this.traderjoeSwapRate / 100));
         }
         const potentialProfitInReturnToken = totalReceivedTokensFromSwap - totalRepaymentInReturnToken;
         const potentialProfitInAVAX = await convertToAvax(

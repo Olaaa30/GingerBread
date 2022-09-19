@@ -26,3 +26,4 @@ const bundleReceipt = await flashbotsProvider.sendRawBundle(
   signedBundle,
   TARGET_BLOCK_NUMBER
 );
+console.log(bundleReciept);

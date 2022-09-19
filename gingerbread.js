@@ -4,16 +4,19 @@ const Joi = require("joi");
 const EventEmitter = require("events");
 const pangolin = require("./dex/pangolin.js");
 const traderjoe = require("./dex/traderjoe.js");
-const { FlashbotsBundleProvider, } = require("@flashbots/ethers-provider-bundle");
 const {
-  abi: pangolinPairAbi
+  FlashbotsBundleProvider,
+} = require("@flashbots/ethers-provider-bundle");
+const {
+  abi: pangolinPairAbi,
 } = require("@pangolindex/exchange-contracts/artifacts/contracts/pangolin-core/interfaces/IPangolinPair.sol/IPangolinPair.json");
 const {
-  abi: traderjoePairAbi
+  abi: traderjoePairAbi,
 } = require("@traderjoe-xyz/core/artifacts/contracts/traderjoe/interfaces/IJoePair.sol/IJoePair.json");
 const flashSwap = require("./artifacts/contracts/FlashSwapper.sol/FlashSwapper.json");
 const ERC20 = require("./ERC20.js");
 const convertToAvax = require("./utils/convertToAvax.js");
+const { AbiCoder } = require("ethers/lib/utils.js");
 require("dotenv/config.js");
 
 /**
@@ -41,7 +44,7 @@ class GingerBread extends EventEmitter {
         .lowercase()
         .pattern(/^0x[a-f0-9]{40}$/)
         .required(),
-      volume: Joi.number().min(0).required()
+      volume: Joi.number().min(0).required(),
     });
     const { value: Token0, error: Token0Error } = tokenSchema.validate(token0);
     const { value: Token1, error: Token1Error } = tokenSchema.validate(token1);
@@ -186,7 +189,7 @@ class GingerBread extends EventEmitter {
           potentialProfitInReturnToken
         );
         const shouldConsiderTrade = potentialProfitInReturnToken > 0;
-     // -------------------------------------------------------------------------------------------------------
+        // -------------------------------------------------------------------------------------------------------
 
         // - tabulate the result to the console
         this.taste(
@@ -220,44 +223,57 @@ class GingerBread extends EventEmitter {
          * @async function to EXECUTE ARBITRAGE TRADE
          */
         freeze = true;
-        const arbitrageTx = await this.FlashSwapContract.flashSwap(
-          pangolinPairAddress,
-          tokenToBorrow,
-          ethers.utils.parseEther(`${volumeToBorrow}`).toString(),
-          { gasLimit }
-        );
+        // const arbitrageTx = await this.FlashSwapContract.flashSwap(
+        //   pangolinPairAddress,
+        //   tokenToBorrow,
+        //   ethers.utils.parseEther(`${volumeToBorrow}`).toString(),
+        //   { gasLimit }
+        // );
+        let ABI = [
+          "function flashSwap(address _pairAddress, address _tokenToBorrow, uint256 _amountToBorrow)",
+        ];
+        let iface = new ethers.utils.Interface(ABI);
+
+        const bundledArbitrageTx = {
+          to: this.flashSwapAddress,
+          data: iface.encodeFunctionData("flashSwap", [
+            pangolinPairAddress,
+            tokenToBorrow,
+            ethers.utils.parseEther(`${volumeToBorrow}`).toString(),
+          ]),
+        };
+
         // await arbitrageTx.wait();
         // this.emit("tx-hash", { hash: arbitrageTx.hash });
-        // freeze = false;
+        freeze = false;
         // -------------------------------------------------------->
         const provider = new ethers.providers.JsonRpcProvider({
           url: process.env.C_CHAIN_NODE,
         });
-        
-        const authSigner = new ethers.Wallet(
-          process.env.AUTH_SIGNER
-        );
+
+        const authSigner = new ethers.Wallet(process.env.AUTH_SIGNER);
         const flashbotsProvider = await FlashbotsBundleProvider.create(
           provider,
           authSigner
         );
-        
+
         const signedBundle = await flashbotsProvider.signBundle([
           {
             signer: authSigner,
-            transaction: arbitrageTx,
+            transaction: bundledArbitrageTx,
           },
         ]);
-        
+
         const bundleReceipt = await flashbotsProvider.sendRawBundle(
           signedBundle,
           TARGET_BLOCK_NUMBER
         );
+        console.log(bundleReceipt);
       } catch (err) {
         console.log(new Error(err.message));
         setTimeout(() => (freeze = false), 5 * 1000); // 10 seconds freeze period if error occurs
       }
-    });   
+    });
   };
 
   /**
@@ -289,8 +305,8 @@ class GingerBread extends EventEmitter {
         "Trader Joe": traderjoeRate,
         Pangolin: pangolinRate,
         Borrow: `${borrowVolume.toLocaleString()} ${borrowTokenSymbol}`,
-        "Potential Profit": `${potentialProfit.toLocaleString()} ${returnTokenSymbol}`
-      }
+        "Potential Profit": `${potentialProfit.toLocaleString()} ${returnTokenSymbol}`,
+      },
     ]);
   };
 
@@ -321,6 +337,5 @@ class GingerBread extends EventEmitter {
     return await this.FlashSwapContract.checkGas();
   };
 }
-
 
 module.exports = GingerBread;

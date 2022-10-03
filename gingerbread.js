@@ -1,4 +1,5 @@
 const { ethers, BigNumber } = require("ethers");
+const Avalanche = require("avalanche").Avalanche;
 const chalk = require("chalk");
 const Joi = require("joi");
 const EventEmitter = require("events");
@@ -18,6 +19,37 @@ const ERC20 = require("./ERC20.js");
 const convertToAvax = require("./utils/convertToAvax.js");
 const { AbiCoder } = require("ethers/lib/utils.js");
 require("dotenv/config.js");
+// For estimating max fee and priority fee using CChain APIs
+const chainId = 43114;
+const avalanche = new Avalanche(
+  "api.avax-mainnet.network",
+  undefined,
+  "https",
+  chainId
+)
+const cchain = avalanche.CChain()
+// Function to estimate max fee and max priority fee
+const calcFeeData = async (
+  maxFeePerGas = undefined,
+  maxPriorityFeePerGas = undefined
+) => {
+  const baseFee = parseInt(await cchain.getBaseFee(), 16) / 1e9
+  maxPriorityFeePerGas =
+    maxPriorityFeePerGas == undefined
+      ? parseInt(await cchain.getMaxPriorityFeePerGas(), 16) / 1e9
+      : maxPriorityFeePerGas
+  maxFeePerGas =
+    maxFeePerGas == undefined ? baseFee + maxPriorityFeePerGas : maxFeePerGas
+
+  if (maxFeePerGas < maxPriorityFeePerGas) {
+    throw "Error: Max fee per gas cannot be less than max priority fee per gas"
+  }
+
+  return {
+    maxFeePerGas: maxFeePerGas.toString(),
+    maxPriorityFeePerGas: maxPriorityFeePerGas.toString(),
+  }
+}
 
 /**
  * GingerBread is an arbitrage bot that runs on the AVALANCHE C-CHAIN

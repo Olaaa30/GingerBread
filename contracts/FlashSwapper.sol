@@ -9,7 +9,6 @@ import "@pangolindex/exchange-contracts/contracts/pangolin-lib/libraries/Transfe
 import "@traderjoe-xyz/core/contracts/traderjoe/interfaces/IJoeRouter02.sol";
 
 
-
 contract FlashSwapper is IPangolinCallee {
 
     address public immutable pangolinFactory;
@@ -162,5 +161,4 @@ contract FlashSwapper is IPangolinCallee {
     function checkGas() external view returns(uint256) {
         return address(this).balance;
     }
-
 }

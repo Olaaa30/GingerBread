@@ -8,6 +8,7 @@ const traderjoe = require("./dex/traderjoe.js");
 const {
   FlashbotsBundleProvider,
 } = require("@flashbots/ethers-provider-bundle");
+
 const {
   abi: pangolinPairAbi,
 } = require("@pangolindex/exchange-contracts/artifacts/contracts/pangolin-core/interfaces/IPangolinPair.sol/IPangolinPair.json");
@@ -18,15 +19,21 @@ const flashSwap = require("./artifacts/contracts/FlashSwapper.sol/FlashSwapper.j
 const ERC20 = require("./ERC20.js");
 const convertToAvax = require("./utils/convertToAvax.js");
 const { AbiCoder } = require("ethers/lib/utils.js");
+const { network } = require("hardhat");
 require("dotenv/config.js");
+
 // For estimating max fee and priority fee using CChain APIs
-const chainId = 43114;
+const chainId = "0xa86a";
+const networkId = 1;
 const avalanche = new Avalanche(
-  "api.avax-mainnet.network",
-  undefined,
+  "api.avax.network",
+  9650,
   "https",
+  networkId,
   chainId
-)
+);
+
+
 const cchain = avalanche.CChain()
 // Function to estimate max fee and max priority fee
 const calcFeeData = async (
@@ -50,7 +57,6 @@ const calcFeeData = async (
     maxPriorityFeePerGas: maxPriorityFeePerGas.toString(),
   }
 }
-
 /**
  * GingerBread is an arbitrage bot that runs on the AVALANCHE C-CHAIN
  * To configure it to run on another network, change the environment variables to point to a node running on another network
@@ -172,7 +178,7 @@ class GingerBread extends EventEmitter {
           ? pangolinReserve1 / pangolinReserve0
           : pangolinReserve0 / pangolinReserve1;
 
-        // - get price from tradejoe
+        // - get price from traderjoe
         const traderjoeReserves = await TraderjoePair.getReserves();
         const traderjoeReserve0 = Number(
           ethers.utils.formatUnits(traderjoeReserves[0], token0Decimals)
@@ -235,22 +241,6 @@ class GingerBread extends EventEmitter {
           tokenToReturnSymbol
         );
 
-        // - don't consider trading if spread cannot cover DEX fees
-        if (!shouldConsiderTrade) return;
-
-        /**
-         * @async function to estimate gas to be used for transaction
-         */
-        const gasLimit = BigNumber.from("350000");
-        const gasPrice = await this.wallet.getGasPrice();
-        const gasCost = gasLimit.mul(gasPrice);
-        const shouldActuallyTrade =
-          potentialProfitInAVAX > Number(ethers.utils.formatEther(gasCost));
-        // ------------------------------------------------------------------------>
-
-        // - don't trade if gasCost is higher than spread
-        if (!shouldActuallyTrade) return;
-
         /**
          * @async function to EXECUTE ARBITRAGE TRADE
          */
@@ -265,29 +255,77 @@ class GingerBread extends EventEmitter {
           "function flashSwap(address _pairAddress, address _tokenToBorrow, uint256 _amountToBorrow)",
         ];
         let iface = new ethers.utils.Interface(ABI);
+        // await arbitrageTx.wait();
+        // this.emit("tx-hash", { hash: arbitrageTx.hash });
+        freeze = false;
+        // -------------------------------------------------------->
 
+        // If the max fee or max priority fee is not provided, then it will automatically calculate using CChain APIs
+        ({ maxFeePerGas, maxPriorityFeePerGas } = await calcFeeData(
+          maxFeePerGas,
+          maxPriorityFeePerGas
+        ));
+
+        maxFeePerGas = ethers.utils.parseUnits(maxFeePerGas, "gwei");
+        maxPriorityFeePerGas = ethers.utils.parseUnits(
+          maxPriorityFeePerGas,
+          "gwei"
+        );
+        // - don't consider trading if spread cannot cover DEX fees
+        if (!shouldConsiderTrade) return;
+
+        /**
+         * @async function to estimate gas to be used for transaction
+         */
+        // const gasLimit = BigNumber.from("350000");
+        // const gasPrice = await this.wallet.getGasPrice();
+        // const gasCost = gasLimit.mul(gasPrice);
+        const shouldActuallyTrade =
+          potentialProfitInAVAX > Number(ethers.utils.formatEther(maxFeePerGas));
+        // ------------------------------------------------------------------------>
+
+        // - don't trade if gasCost is higher than spread
+        if (!shouldActuallyTrade) return;
+
+        // Type 2 transaction is for EIP1559
         const bundledArbitrageTx = {
+          type: 2,
           to: this.flashSwapAddress,
           data: iface.encodeFunctionData("flashSwap", [
             pangolinPairAddress,
             tokenToBorrow,
             ethers.utils.parseEther(`${volumeToBorrow}`).toString(),
           ]),
+          maxFeePerGas,
+          maxPriorityFeePerGas,
         };
 
-        // await arbitrageTx.wait();
-        // this.emit("tx-hash", { hash: arbitrageTx.hash });
-        freeze = false;
-        // -------------------------------------------------------->
-        const provider = new ethers.providers.JsonRpcProvider({
-          url: process.env.C_CHAIN_NODE,
-        });
-
-        const authSigner = new ethers.Wallet(process.env.AUTH_SIGNER);
-        const flashbotsProvider = await FlashbotsBundleProvider.create(
-          provider,
-          authSigner
+        const newGasLimit = await this.web3Provider.estimateGas(
+          bundledArbitrageTx
         );
+
+        const signedTx = await this.wallet.signTransaction(bundledArbitrageTx);
+        const txHash = ethers.utils.keccak256(signedTx);
+
+        console.log("Sending signed transaction");
+
+        // Sending a signed transaction and waiting for its inclusion
+        await (await this.web3Provider.sendTransaction(signedTx)).wait();
+
+        console.log(
+          `View transaction with nonce ${nonce}: https://snowtrace.io/tx/${txHash}`
+        );
+
+        // /*
+        // const provider = new ethers.providers.JsonRpcProvider({
+        //   url: process.env.C_CHAIN_NODE,
+        // });
+
+        // const authSigner = new ethers.Wallet(process.env.AUTH_SIGNER);
+        // const flashbotsProvider = await FlashbotsBundleProvider.create(
+        //   provider,
+        //   authSigner
+        // );
 
         const signedBundle = await flashbotsProvider.signBundle([
           {
@@ -299,8 +337,8 @@ class GingerBread extends EventEmitter {
         const bundleReceipt = await flashbotsProvider.sendRawBundle(
           signedBundle,
           TARGET_BLOCK_NUMBER
-        );
-        console.log(bundleReceipt);
+        );*/
+        // console.log(bundleReceipt);
       } catch (err) {
         console.log(new Error(err.message));
         setTimeout(() => (freeze = false), 5 * 1000); // 10 seconds freeze period if error occurs
@@ -328,7 +366,10 @@ class GingerBread extends EventEmitter {
     potentialProfit,
     borrowTokenSymbol,
     borrowVolume,
-    returnTokenSymbol
+    returnTokenSymbol,
+    maxFeePerGas,
+    maxPriorityFeePerGas,
+    newGasLimit
   ) => {
     console.table([
       {
@@ -338,6 +379,9 @@ class GingerBread extends EventEmitter {
         Pangolin: pangolinRate,
         Borrow: `${borrowVolume.toLocaleString()} ${borrowTokenSymbol}`,
         "Potential Profit": `${potentialProfit.toLocaleString()} ${returnTokenSymbol}`,
+        "gaslimit": newGasLimit,
+        "mFPG": maxFeePerGas,
+        "mPFPG": maxPriorityFeePerGas
       },
     ]);
   };

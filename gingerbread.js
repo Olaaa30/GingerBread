@@ -240,30 +240,25 @@ class GingerBread extends EventEmitter {
           volumeToBorrow,
           tokenToReturnSymbol
         );
+        // - don't consider trading if spread cannot cover DEX fees
+        if (!shouldConsiderTrade) return;
 
         /**
          * @async function to EXECUTE ARBITRAGE TRADE
          */
         freeze = true;
-        // const arbitrageTx = await this.FlashSwapContract.flashSwap(
-        //   pangolinPairAddress,
-        //   tokenToBorrow,
-        //   ethers.utils.parseEther(`${volumeToBorrow}`).toString(),
-        //   { gasLimit }
-        // );
+
         let ABI = [
           "function flashSwap(address _pairAddress, address _tokenToBorrow, uint256 _amountToBorrow)",
         ];
         let iface = new ethers.utils.Interface(ABI);
-        // await arbitrageTx.wait();
-        // this.emit("tx-hash", { hash: arbitrageTx.hash });
-        freeze = false;
+
         // -------------------------------------------------------->
 
         // If the max fee or max priority fee is not provided, then it will automatically calculate using CChain APIs
         ({ maxFeePerGas, maxPriorityFeePerGas } = await calcFeeData(
-          maxFeePerGas,
-          maxPriorityFeePerGas
+          (maxFeePerGas = undefined),
+          (maxPriorityFeePerGas = undefined)
         ));
 
         maxFeePerGas = ethers.utils.parseUnits(maxFeePerGas, "gwei");
@@ -271,8 +266,6 @@ class GingerBread extends EventEmitter {
           maxPriorityFeePerGas,
           "gwei"
         );
-        // - don't consider trading if spread cannot cover DEX fees
-        if (!shouldConsiderTrade) return;
 
         /**
          * @async function to estimate gas to be used for transaction
@@ -281,14 +274,14 @@ class GingerBread extends EventEmitter {
         // const gasPrice = await this.wallet.getGasPrice();
         // const gasCost = gasLimit.mul(gasPrice);
         const shouldActuallyTrade =
-          potentialProfitInAVAX > Number(ethers.utils.formatEther(maxFeePerGas));
+          potentialProfitInAVAX >
+          Number(ethers.utils.formatEther(maxFeePerGas));
         // ------------------------------------------------------------------------>
-
         // - don't trade if gasCost is higher than spread
         if (!shouldActuallyTrade) return;
 
         // Type 2 transaction is for EIP1559
-        const bundledArbitrageTx = {
+        const arbitrageTx = {
           type: 2,
           to: this.flashSwapAddress,
           data: iface.encodeFunctionData("flashSwap", [
@@ -299,45 +292,48 @@ class GingerBread extends EventEmitter {
           maxFeePerGas,
           maxPriorityFeePerGas,
         };
+        // const arbitrageTx = await this.FlashSwapContract.flashSwap(
+        //   pangolinPairAddress,
+        //   tokenToBorrow,
+        //   ethers.utils.parseEther(`${volumeToBorrow}`).toString(),
+        //   { gasLimit }
+        // );
+        // await arbitrageTx.wait();
+        // this.emit("tx-hash", { hash: arbitrageTx.hash });
 
-        const newGasLimit = await this.web3Provider.estimateGas(
-          bundledArbitrageTx
-        );
-
-        const signedTx = await this.wallet.signTransaction(bundledArbitrageTx);
+        const signedTx = await this.wallet.signTransaction(arbitrageTx);
         const txHash = ethers.utils.keccak256(signedTx);
 
-        //console.log("Sending signed transaction");
+        console.log("Sending signed transaction");
 
         // Sending a signed transaction and waiting for its inclusion
-        //await (await this.web3Provider.sendTransaction(signedTx)).wait();
+        await (await this.web3Provider.sendTransaction(signedTx)).wait();
 
-        //console.log(
-         // `View transaction with nonce ${nonce}: https://snowtrace.io/tx/${txHash}`
-        //);
-
-        
-        const provider = new ethers.providers.JsonRpcProvider({
-          url: process.env.C_CHAIN_NODE,
-        });
-
-        const authSigner = new ethers.Wallet(process.env.AUTH_SIGNER);
-        const flashbotsProvider = await FlashbotsBundleProvider.create(
-          provider,
-          authSigner
+        console.log(
+        `View transaction with nonce ${nonce}: https://snowtrace.io/tx/${txHash}`
         );
 
-        const signedBundle = await flashbotsProvider.signBundle([
-          {
-            signer: authSigner,
-            transaction: bundledArbitrageTx,
-          },
-        ]);
+        // const provider = new ethers.providers.JsonRpcProvider({
+        //   url: process.env.C_CHAIN_NODE,
+        // });
 
-        const bundleReceipt = await flashbotsProvider.sendRawBundle(
-          signedBundle,
-          TARGET_BLOCK_NUMBER
-        );
+        // const authSigner = new ethers.Wallet(process.env.AUTH_SIGNER);
+        // const flashbotsProvider = await FlashbotsBundleProvider.create(
+        //   provider,
+        //   authSigner
+        // );
+
+        // const signedBundle = await flashbotsProvider.signBundle([
+        //   {
+        //     signer: authSigner,
+        //     transaction: bundledArbitrageTx,
+        //   },
+        // ]);
+
+        // const bundleReceipt = await flashbotsProvider.sendRawBundle(
+        //   signedBundle,
+        //   TARGET_BLOCK_NUMBER
+        // );
         // console.log(bundleReceipt);
       } catch (err) {
         console.log(new Error(err.message));

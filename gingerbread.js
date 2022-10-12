@@ -307,25 +307,25 @@ class GingerBread extends EventEmitter {
         const signedTx = await this.wallet.signTransaction(bundledArbitrageTx);
         const txHash = ethers.utils.keccak256(signedTx);
 
-        console.log("Sending signed transaction");
+        //console.log("Sending signed transaction");
 
         // Sending a signed transaction and waiting for its inclusion
-        await (await this.web3Provider.sendTransaction(signedTx)).wait();
+        //await (await this.web3Provider.sendTransaction(signedTx)).wait();
 
-        console.log(
-          `View transaction with nonce ${nonce}: https://snowtrace.io/tx/${txHash}`
+        //console.log(
+         // `View transaction with nonce ${nonce}: https://snowtrace.io/tx/${txHash}`
+        //);
+
+        
+        const provider = new ethers.providers.JsonRpcProvider({
+          url: process.env.C_CHAIN_NODE,
+        });
+
+        const authSigner = new ethers.Wallet(process.env.AUTH_SIGNER);
+        const flashbotsProvider = await FlashbotsBundleProvider.create(
+          provider,
+          authSigner
         );
-
-        // /*
-        // const provider = new ethers.providers.JsonRpcProvider({
-        //   url: process.env.C_CHAIN_NODE,
-        // });
-
-        // const authSigner = new ethers.Wallet(process.env.AUTH_SIGNER);
-        // const flashbotsProvider = await FlashbotsBundleProvider.create(
-        //   provider,
-        //   authSigner
-        // );
 
         const signedBundle = await flashbotsProvider.signBundle([
           {
@@ -337,7 +337,7 @@ class GingerBread extends EventEmitter {
         const bundleReceipt = await flashbotsProvider.sendRawBundle(
           signedBundle,
           TARGET_BLOCK_NUMBER
-        );*/
+        );
         // console.log(bundleReceipt);
       } catch (err) {
         console.log(new Error(err.message));

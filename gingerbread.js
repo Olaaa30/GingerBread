@@ -5,9 +5,9 @@ const Joi = require("joi");
 const EventEmitter = require("events");
 const pangolin = require("./dex/pangolin.js");
 const traderjoe = require("./dex/traderjoe.js");
-const {
-  FlashbotsBundleProvider,
-} = require("@flashbots/ethers-provider-bundle");
+// const {
+//   FlashbotsBundleProvider,
+// } = require("@flashbots/ethers-provider-bundle");
 
 const {
   abi: pangolinPairAbi,
@@ -270,48 +270,48 @@ class GingerBread extends EventEmitter {
         /**
          * @async function to estimate gas to be used for transaction
          */
-        // const gasLimit = BigNumber.from("350000");
-        // const gasPrice = await this.wallet.getGasPrice();
-        // const gasCost = gasLimit.mul(gasPrice);
+        const gasLimit = BigNumber.from("350000");
+        const gasPrice = await this.wallet.getGasPrice();
+        const gasCost = gasLimit.mul(gasPrice);
         const shouldActuallyTrade =
           potentialProfitInAVAX >
-          Number(ethers.utils.formatEther(maxFeePerGas));
+          Number(ethers.utils.formatEther(gasCost));
         // ------------------------------------------------------------------------>
         // - don't trade if gasCost is higher than spread
         if (!shouldActuallyTrade) return;
 
         // Type 2 transaction is for EIP1559
-        const arbitrageTx = {
-          type: 2,
-          to: this.flashSwapAddress,
-          data: iface.encodeFunctionData("flashSwap", [
-            pangolinPairAddress,
-            tokenToBorrow,
-            ethers.utils.parseEther(`${volumeToBorrow}`).toString(),
-          ]),
-          maxFeePerGas,
-          maxPriorityFeePerGas,
-        };
-        // const arbitrageTx = await this.FlashSwapContract.flashSwap(
-        //   pangolinPairAddress,
-        //   tokenToBorrow,
-        //   ethers.utils.parseEther(`${volumeToBorrow}`).toString(),
-        //   { gasLimit }
-        // );
-        // await arbitrageTx.wait();
-        // this.emit("tx-hash", { hash: arbitrageTx.hash });
+        // const arbitrageTx = {
+        //   type: 2,
+        //   to: this.flashSwapAddress,
+        //   data: iface.encodeFunctionData("flashSwap", [
+        //     pangolinPairAddress,
+        //     tokenToBorrow,
+        //     ethers.utils.parseEther(`${volumeToBorrow}`).toString(),
+        //   ]),
+        //   maxFeePerGas,
+        //   maxPriorityFeePerGas,
+        // };
+        const arbitrageTx = await this.FlashSwapContract.flashSwap(
+          pangolinPairAddress,
+          tokenToBorrow,
+          ethers.utils.parseEther(`${volumeToBorrow}`).toString(),
+          { gasCost }
+        );
+        await arbitrageTx.wait();
+        this.emit("tx-hash", { hash: arbitrageTx.hash });
 
-        const signedTx = await this.wallet.signTransaction(arbitrageTx);
-        const txHash = ethers.utils.keccak256(signedTx);
+        // const signedTx = await this.wallet.signTransaction(arbitrageTx);
+        // const txHash = ethers.utils.keccak256(signedTx);
 
         console.log("Sending signed transaction");
 
         // Sending a signed transaction and waiting for its inclusion
-        await (await this.web3Provider.sendTransaction(signedTx)).wait();
+        // await (await this.web3Provider.sendTransaction(signedTx)).wait();
 
-        console.log(
-        `View transaction with nonce ${nonce}: https://snowtrace.io/tx/${txHash}`
-        );
+        // console.log(
+        // `View transaction with nonce ${nonce}: https://snowtrace.io/tx/${txHash}`
+        // );
 
         // const provider = new ethers.providers.JsonRpcProvider({
         //   url: process.env.C_CHAIN_NODE,

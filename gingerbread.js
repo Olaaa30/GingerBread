@@ -136,7 +136,7 @@ class GingerBread extends EventEmitter {
           ? pangolinReserve1 / pangolinReserve0
           : pangolinReserve0 / pangolinReserve1;
 
-        // - get price from tradejoe
+        // - get price from traderjoe
         const traderjoeReserves = await TraderjoePair.getReserves();
         const traderjoeReserve0 = Number(
           ethers.utils.formatUnits(traderjoeReserves[0], token0Decimals)
@@ -150,14 +150,19 @@ class GingerBread extends EventEmitter {
 
         // - check if the difference can cover DEX fees ------------------------------------------------------->
         const tokenToBorrow =
-          traderjoePrice > pangolinPrice ? this.token1 : this.token0;
+          traderjoePrice > pangolinPrice && traderjoePrice > 0
+            ? this.token1
+            : this.token0;
         const tokenToBorrowSymbol =
-          pangolinPrice < traderjoePrice ? token1Symbol : token0Symbol;
+          tokenToBorrow === this.token0 ? token0Symbol : token1Symbol;
         const tokenToReturnSymbol =
-          pangolinPrice < traderjoePrice ? token0Symbol : token1Symbol;
-        let volumeToBorrow;
+          tokenToBorrow === this.token0 ? token0Symbol : token1Symbol;
+        
+          let volumeToBorrow;
         let totalRepaymentInReturnToken;
         let totalReceivedTokensFromSwap;
+        const lendFeeMultiplier = (1 + this.pangolinSwapRate) / 100;
+        const swapFeeMultiplier = (1 + this.traderjoeSwapRate) / 100;
 
         if (tokenToBorrow === this.token0) {
           volumeToBorrow = this.TOKEN0_TRADE;

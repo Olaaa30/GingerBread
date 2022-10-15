@@ -162,7 +162,7 @@ class GingerBread extends EventEmitter {
         let totalRepaymentInReturnToken;
         let totalReceivedTokensFromSwap;
         const lendFeeMultiplier = 1 + this.pangolinSwapRate / 100;
-        const swapFeeMultiplier = 1 + this.traderjoeSwapRate / 100;
+        const swapFeeMultiplier = 1 - this.traderjoeSwapRate / 100;
 
         if (tokenToBorrow === this.token0) {
           volumeToBorrow = this.TOKEN0_TRADE;

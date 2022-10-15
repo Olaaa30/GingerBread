@@ -1,14 +1,10 @@
+require("dotenv/config.js");
 const { ethers, BigNumber } = require("ethers");
-const Avalanche = require("avalanche").Avalanche;
 const chalk = require("chalk");
 const Joi = require("joi");
 const EventEmitter = require("events");
 const pangolin = require("./dex/pangolin.js");
 const traderjoe = require("./dex/traderjoe.js");
-// const {
-//   FlashbotsBundleProvider,
-// } = require("@flashbots/ethers-provider-bundle");
-
 const {
   abi: pangolinPairAbi,
 } = require("@pangolindex/exchange-contracts/artifacts/contracts/pangolin-core/interfaces/IPangolinPair.sol/IPangolinPair.json");
@@ -18,45 +14,7 @@ const {
 const flashSwap = require("./artifacts/contracts/FlashSwapper.sol/FlashSwapper.json");
 const ERC20 = require("./ERC20.js");
 const convertToAvax = require("./utils/convertToAvax.js");
-const { AbiCoder } = require("ethers/lib/utils.js");
-const { network } = require("hardhat");
-require("dotenv/config.js");
 
-// For estimating max fee and priority fee using CChain APIs
-const chainId = "0xa86a";
-const networkId = 1;
-const avalanche = new Avalanche(
-  "api.avax.network",
-  9650,
-  "https",
-  networkId,
-  chainId
-);
-
-
-const cchain = avalanche.CChain()
-// Function to estimate max fee and max priority fee
-const calcFeeData = async (
-  maxFeePerGas = undefined,
-  maxPriorityFeePerGas = undefined
-) => {
-  const baseFee = parseInt(await cchain.getBaseFee(), 16) / 1e9
-  maxPriorityFeePerGas =
-    maxPriorityFeePerGas == undefined
-      ? parseInt(await cchain.getMaxPriorityFeePerGas(), 16) / 1e9
-      : maxPriorityFeePerGas
-  maxFeePerGas =
-    maxFeePerGas == undefined ? baseFee + maxPriorityFeePerGas : maxFeePerGas
-
-  if (maxFeePerGas < maxPriorityFeePerGas) {
-    throw "Error: Max fee per gas cannot be less than max priority fee per gas"
-  }
-
-  return {
-    maxFeePerGas: maxFeePerGas.toString(),
-    maxPriorityFeePerGas: maxPriorityFeePerGas.toString(),
-  }
-}
 /**
  * GingerBread is an arbitrage bot that runs on the AVALANCHE C-CHAIN
  * To configure it to run on another network, change the environment variables to point to a node running on another network
@@ -178,7 +136,7 @@ class GingerBread extends EventEmitter {
           ? pangolinReserve1 / pangolinReserve0
           : pangolinReserve0 / pangolinReserve1;
 
-        // - get price from traderjoe
+        // - get price from tradejoe
         const traderjoeReserves = await TraderjoePair.getReserves();
         const traderjoeReserve0 = Number(
           ethers.utils.formatUnits(traderjoeReserves[0], token0Decimals)
@@ -192,19 +150,14 @@ class GingerBread extends EventEmitter {
 
         // - check if the difference can cover DEX fees ------------------------------------------------------->
         const tokenToBorrow =
-          traderjoePrice > pangolinPrice && traderjoePrice > 0
-            ? this.token1
-            : this.token0;
+          traderjoePrice > pangolinPrice ? this.token1 : this.token0;
         const tokenToBorrowSymbol =
-          tokenToBorrow === this.token0 ? token0Symbol : token1Symbol;
+          pangolinPrice < traderjoePrice ? token1Symbol : token0Symbol;
         const tokenToReturnSymbol =
-          tokenToBorrow === this.token0 ? token1Symbol : token0Symbol;
-
+          pangolinPrice < traderjoePrice ? token0Symbol : token1Symbol;
         let volumeToBorrow;
         let totalRepaymentInReturnToken;
         let totalReceivedTokensFromSwap;
-        const lendFeeMultiplier = 1 + this.pangolinSwapRate / 100;
-        const swapFeeMultiplier = 1 - this.traderjoeSwapRate / 100;
 
         if (tokenToBorrow === this.token0) {
           volumeToBorrow = this.TOKEN0_TRADE;
@@ -219,7 +172,6 @@ class GingerBread extends EventEmitter {
           totalReceivedTokensFromSwap =
             volumeToBorrow * traderjoePrice * swapFeeMultiplier;
         }
-
         const potentialProfitInReturnToken =
           totalReceivedTokensFromSwap - totalRepaymentInReturnToken;
         const potentialProfitInAVAX = await convertToAvax(
@@ -240,32 +192,9 @@ class GingerBread extends EventEmitter {
           volumeToBorrow,
           tokenToReturnSymbol
         );
+
         // - don't consider trading if spread cannot cover DEX fees
         if (!shouldConsiderTrade) return;
-
-        /**
-         * @async function to EXECUTE ARBITRAGE TRADE
-         */
-        freeze = true;
-
-        let ABI = [
-          "function flashSwap(address _pairAddress, address _tokenToBorrow, uint256 _amountToBorrow)",
-        ];
-        let iface = new ethers.utils.Interface(ABI);
-
-        // -------------------------------------------------------->
-
-        // If the max fee or max priority fee is not provided, then it will automatically calculate using CChain APIs
-        ({ maxFeePerGas, maxPriorityFeePerGas } = await calcFeeData(
-          (maxFeePerGas = undefined),
-          (maxPriorityFeePerGas = undefined)
-        ));
-
-        maxFeePerGas = ethers.utils.parseUnits(maxFeePerGas, "gwei");
-        maxPriorityFeePerGas = ethers.utils.parseUnits(
-          maxPriorityFeePerGas,
-          "gwei"
-        );
 
         /**
          * @async function to estimate gas to be used for transaction
@@ -274,67 +203,26 @@ class GingerBread extends EventEmitter {
         const gasPrice = await this.wallet.getGasPrice();
         const gasCost = gasLimit.mul(gasPrice);
         const shouldActuallyTrade =
-          potentialProfitInAVAX >
-          Number(ethers.utils.formatEther(gasCost));
+          potentialProfitInAVAX > Number(ethers.utils.formatEther(gasCost));
         // ------------------------------------------------------------------------>
+
         // - don't trade if gasCost is higher than spread
         if (!shouldActuallyTrade) return;
 
-        // Type 2 transaction is for EIP1559
-        // const arbitrageTx = {
-        //   type: 2,
-        //   to: this.flashSwapAddress,
-        //   data: iface.encodeFunctionData("flashSwap", [
-        //     pangolinPairAddress,
-        //     tokenToBorrow,
-        //     ethers.utils.parseEther(`${volumeToBorrow}`).toString(),
-        //   ]),
-        //   maxFeePerGas,
-        //   maxPriorityFeePerGas,
-        // };
+        /**
+         * @async function to EXECUTE ARBITRAGE TRADE
+         */
+        freeze = true;
         const arbitrageTx = await this.FlashSwapContract.flashSwap(
           pangolinPairAddress,
           tokenToBorrow,
           ethers.utils.parseEther(`${volumeToBorrow}`).toString(),
-          { gasCost }
+          { gasLimit }
         );
         await arbitrageTx.wait();
         this.emit("tx-hash", { hash: arbitrageTx.hash });
-
-        // const signedTx = await this.wallet.signTransaction(arbitrageTx);
-        // const txHash = ethers.utils.keccak256(signedTx);
-
-        console.log("Sending signed transaction");
-
-        // Sending a signed transaction and waiting for its inclusion
-        // await (await this.web3Provider.sendTransaction(signedTx)).wait();
-
-        // console.log(
-        // `View transaction with nonce ${nonce}: https://snowtrace.io/tx/${txHash}`
-        // );
-
-        // const provider = new ethers.providers.JsonRpcProvider({
-        //   url: process.env.C_CHAIN_NODE,
-        // });
-
-        // const authSigner = new ethers.Wallet(process.env.AUTH_SIGNER);
-        // const flashbotsProvider = await FlashbotsBundleProvider.create(
-        //   provider,
-        //   authSigner
-        // );
-
-        // const signedBundle = await flashbotsProvider.signBundle([
-        //   {
-        //     signer: authSigner,
-        //     transaction: bundledArbitrageTx,
-        //   },
-        // ]);
-
-        // const bundleReceipt = await flashbotsProvider.sendRawBundle(
-        //   signedBundle,
-        //   TARGET_BLOCK_NUMBER
-        // );
-        // console.log(bundleReceipt);
+        freeze = false;
+        // -------------------------------------------------------->
       } catch (err) {
         console.log(new Error(err.message));
         setTimeout(() => (freeze = false), 5 * 1000); // 10 seconds freeze period if error occurs
@@ -362,10 +250,7 @@ class GingerBread extends EventEmitter {
     potentialProfit,
     borrowTokenSymbol,
     borrowVolume,
-    returnTokenSymbol,
-    maxFeePerGas,
-    maxPriorityFeePerGas,
-    newGasLimit
+    returnTokenSymbol
   ) => {
     console.table([
       {
@@ -375,9 +260,6 @@ class GingerBread extends EventEmitter {
         Pangolin: pangolinRate,
         Borrow: `${borrowVolume.toLocaleString()} ${borrowTokenSymbol}`,
         "Potential Profit": `${potentialProfit.toLocaleString()} ${returnTokenSymbol}`,
-        "gaslimit": newGasLimit,
-        "mFPG": maxFeePerGas,
-        "mPFPG": maxPriorityFeePerGas
       },
     ]);
   };
